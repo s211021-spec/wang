@@ -3,13 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>北區公廁資訊看板</title>
+    <title>北區公廁資訊看板 - 距離定位版</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700&display=swap');
-        body { font-family: 'Noto Sans TC', sans-serif; background-color: #f3f4f6; }
-        .glass-card { background: rgba(255, 255, 255, 0.9); backdrop-filter: blur(10px); }
+        body { font-family: 'Noto Sans TC', sans-serif; background-color: #f3f4f6; scroll-behavior: smooth; }
+        .recommend-gradient { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
     </style>
 </head>
 <body>
@@ -20,40 +20,46 @@
                 <i class="fas fa-restroom"></i> 臺中市北區公廁導覽
             </h1>
             <div class="mt-4 md:mt-0 relative w-full md:w-96">
-                <input type="text" id="searchInput" placeholder="搜尋公廁名稱、地址或村里..." 
+                <input type="text" id="searchInput" placeholder="搜尋名稱、地址..." 
                     class="w-full px-4 py-2 rounded-full text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-300">
                 <i class="fas fa-search absolute right-4 top-3 text-gray-400"></i>
             </div>
         </div>
     </header>
 
-    <div class="container mx-auto px-4 mt-8">
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div class="bg-white p-4 rounded-xl shadow-sm border-l-4 border-blue-500">
-                <p class="text-sm text-gray-500">當前區域</p>
-                <p class="text-xl font-bold text-gray-800">臺中市北區</p>
-            </div>
-            <div class="bg-white p-4 rounded-xl shadow-sm border-l-4 border-green-500">
-                <p class="text-sm text-gray-500">總計數量</p>
-                <p id="totalCount" class="text-xl font-bold text-gray-800">計算中...</p>
-            </div>
-            <div class="bg-white p-4 rounded-xl shadow-sm border-l-4 border-yellow-500">
-                <p class="text-sm text-gray-500">資料來源</p>
-                <p class="text-xl font-bold text-gray-800">臺中市政府環境保護局</p>
-            </div>
-        </div>
-    </div>
-
     <main class="container mx-auto px-4 py-8">
+        <div id="nearbySection" class="hidden mb-10">
+            <h2 class="text-xl font-bold mb-4 text-gray-700 flex items-center gap-2">
+                <i class="fas fa-location-arrow text-blue-500"></i> 離您最近
+            </h2>
+            <div id="nearbyContainer" class="w-full">
+                </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+            <div class="bg-white p-4 rounded-xl shadow-sm border-l-4 border-blue-500">
+                <p class="text-sm text-gray-500">搜尋結果</p>
+                <p id="totalCount" class="text-xl font-bold text-gray-800">載入中...</p>
+            </div>
+            <div id="locationStatus" class="bg-white p-4 rounded-xl shadow-sm border-l-4 border-gray-400">
+                <p class="text-sm text-gray-500">定位狀態</p>
+                <p class="text-md font-bold text-gray-600">尚未取得位置</p>
+            </div>
+            <button onclick="getLocation()" class="bg-blue-500 hover:bg-blue-600 text-white rounded-xl shadow-md transition font-bold">
+                <i class="fas fa-crosshairs"></i> 重新更新位置
+            </button>
+        </div>
+
         <div id="toiletGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             <div class="col-span-full text-center py-10 text-gray-500">資料載入中...</div>
         </div>
     </main>
 
     <script>
-        // 這是您剛才整理的北區 JSON 數據 (簡化示意，實際會包含全部)
-        const toiletData = [
-  {
+        // 假設這是您的原始資料 (請確保包含經緯度：toilet.緯度, toilet.經度)
+        let toiletData = [
+            // 這裡放入您整理好的 JSON 陣列
+            {  
     "縣市別代碼": 66000,
     "公廁編號": "B050000001",
     "公廁名稱": "臺中市立圖書館北區分館1F-男廁",
@@ -835,54 +841,130 @@
   },    
 ];
 
-        const toiletGrid = document.getElementById('toiletGrid');
-        const searchInput = document.getElementById('searchInput');
-        const totalCount = document.getElementById('totalCount');
+        let userCoords = null;
 
+        // 計算距離公式 (km)
+        function getDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371; 
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLon = (lon2 - lon1) * Math.PI / 180;
+            const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            return R * c;
+        }
+
+        // 核心渲染函數
         function renderToilets(data) {
-            totalCount.innerText = `${data.length} 處`;
-            if (data.length === 0) {
-                toiletGrid.innerHTML = `<div class="col-span-full text-center py-10 text-gray-500">找不到符合搜尋條件的公廁。</div>`;
-                return;
+            const toiletGrid = document.getElementById('toiletGrid');
+            const totalCount = document.getElementById('totalCount');
+            
+            // 如果有定位，先根據距離排序
+            if (userCoords) {
+                data.sort((a, b) => {
+                    const distA = getDistance(userCoords.lat, userCoords.lng, a.緯度, a.經度);
+                    const distB = getDistance(userCoords.lat, userCoords.lng, b.緯度, b.經度);
+                    return distA - distB;
+                });
+                
+                // 顯示最近的一處
+                renderNearby(data[0]);
             }
 
-            toiletGrid.innerHTML = data.map(toilet => `
+            totalCount.innerText = `${data.length} 處`;
+            
+            toiletGrid.innerHTML = data.map(toilet => {
+                let distText = '';
+                if (userCoords) {
+                    const d = getDistance(userCoords.lat, userCoords.lng, toilet.緯度, toilet.經度);
+                    distText = `<span class="text-blue-600 font-bold"><i class="fas fa-walking"></i> ${d.toFixed(2)} km</span>`;
+                }
+
+                return `
                 <div class="bg-white rounded-2xl shadow-md hover:shadow-xl transition-shadow duration-300 overflow-hidden border border-gray-100">
                     <div class="p-5">
                         <div class="flex justify-between items-start mb-4">
                             <span class="px-2 py-1 bg-blue-100 text-blue-600 text-xs font-bold rounded">${toilet.公廁類別}</span>
-                            <span class="px-2 py-1 bg-green-100 text-green-600 text-xs font-bold rounded">${toilet.目前公廁級別}</span>
+                            ${distText}
                         </div>
-                        <h3 class="text-lg font-bold text-gray-800 mb-2 truncate" title="${toilet.公廁名稱}">${toilet.公廁名稱}</h3>
+                        <h3 class="text-lg font-bold text-gray-800 mb-2 truncate">${toilet.公廁名稱}</h3>
                         <p class="text-gray-500 text-sm mb-4 flex items-center gap-2">
                             <i class="fas fa-map-marker-alt text-red-400"></i> ${toilet.地址或地點描述}
                         </p>
                         <hr class="mb-4">
-                        <div class="flex justify-between items-center text-xs text-gray-400">
-                            <span><i class="fas fa-building"></i> ${toilet.權管單位}</span>
-                            <a href="https://www.google.com/maps?q=${toilet.緯度},${toilet.經度}" target="_blank" 
+                        <div class="flex justify-between items-center text-xs">
+                            <span class="text-gray-400"><i class="fas fa-building"></i> ${toilet.權管單位}</span>
+                            <a href="https://www.google.com/maps/dir/?api=1&destination=${toilet.緯度},${toilet.經度}" target="_blank" 
                                class="text-blue-500 hover:text-blue-700 font-bold flex items-center gap-1">
                                導航 <i class="fas fa-external-link-alt"></i>
                             </a>
                         </div>
                     </div>
+                </div>`;
+            }).join('');
+        }
+
+        // 渲染最近推薦卡片
+        function renderNearby(toilet) {
+            const nearbySection = document.getElementById('nearbySection');
+            const container = document.getElementById('nearbyContainer');
+            const dist = getDistance(userCoords.lat, userCoords.lng, toilet.緯度, toilet.經度);
+            
+            nearbySection.classList.remove('hidden');
+            container.innerHTML = `
+                <div class="recommend-gradient p-6 rounded-2xl text-white shadow-xl flex flex-col md:flex-row justify-between items-center gap-4">
+                    <div>
+                        <div class="bg-white/20 inline-block px-3 py-1 rounded-full text-xs mb-2">最佳推薦：距離最短</div>
+                        <h3 class="text-2xl font-bold">${toilet.公廁名稱}</h3>
+                        <p class="opacity-90"><i class="fas fa-map-marker-alt"></i> ${toilet.地址或地點描述}</p>
+                    </div>
+                    <div class="text-center md:text-right">
+                        <div class="text-3xl font-black">${dist.toFixed(2)} km</div>
+                        <a href="https://www.google.com/maps/dir/?api=1&destination=${toilet.緯度},${toilet.經度}" target="_blank"
+                           class="mt-2 inline-block bg-white text-blue-600 px-6 py-2 rounded-full font-bold hover:bg-blue-50 transition">
+                           立即前往
+                        </a>
+                    </div>
                 </div>
-            `).join('');
+            `;
+        }
+
+        // 取得位置功能
+        function getLocation() {
+            const status = document.getElementById('locationStatus');
+            if (navigator.geolocation) {
+                status.innerHTML = `<p class="text-sm text-gray-500">定位狀態</p><p class="text-md font-bold text-blue-500 italic">定位中...</p>`;
+                navigator.geolocation.getCurrentPosition(
+                    (position) => {
+                        userCoords = {
+                            lat: position.coords.latitude,
+                            lng: position.coords.longitude
+                        };
+                        status.innerHTML = `<p class="text-sm text-gray-500">定位狀態</p><p class="text-md font-bold text-green-600">已成功定位</p>`;
+                        renderToilets(toiletData);
+                    },
+                    (error) => {
+                        status.innerHTML = `<p class="text-sm text-gray-500">定位狀態</p><p class="text-md font-bold text-red-500">定位失敗 (請開啟權限)</p>`;
+                    }
+                );
+            }
         }
 
         // 搜尋功能
-        searchInput.addEventListener('input', (e) => {
+        document.getElementById('searchInput').addEventListener('input', (e) => {
             const keyword = e.target.value.toLowerCase();
             const filtered = toiletData.filter(item => 
                 item.公廁名稱.toLowerCase().includes(keyword) || 
-                item.地址或地點描述.toLowerCase().includes(keyword) ||
-                item.權管單位.toLowerCase().includes(keyword)
+                item.地址或地點描述.toLowerCase().includes(keyword)
             );
             renderToilets(filtered);
         });
 
-        // 初始渲染
-        renderToilets(toiletData);
+        // 啟動
+        window.onload = () => {
+            renderToilets(toiletData);
+            getLocation(); // 頁面載入自動詢問定位
+        };
     </script>
 </body>
 </html>
